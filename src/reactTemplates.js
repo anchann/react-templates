@@ -375,9 +375,6 @@ function convertHtmlToReact(node, context) {
             }));
             data.body = repeatTemplate(data);
         }
-        if (node.attribs[ifAttr]) {
-            data.body = ifTemplate(data);
-        }
         if (node.attribs[scopeAttr]) {
             var scopeVarDeclarations = _.reduce(data.innerScopeMapping, function(acc, rightHandSide, leftHandSide) {
                 var declaration = "var " + leftHandSide + " = " + rightHandSide + ";"
@@ -386,6 +383,12 @@ function convertHtmlToReact(node, context) {
             var functionBody = scopeVarDeclarations + 'return ' + data.body;
             var generatedFuncName = generateInjectedFunc(context, 'scope' + data.scopeName, functionBody, _.keys(data.outerScopeMapping));
             data.body = generatedFuncName + '.apply(this, [' + _.values(data.outerScopeMapping).join(',') + '])';
+        }
+
+        // Order matters here. The rt-if directive wraps over rt-scope, thus making sure
+        // that the scope is only evaluated after the if condition passed
+        if (node.attribs[ifProp]) {
+            data.body = ifTemplate(data);
         }
         return data.body;
     } else if (node.type === 'comment') {

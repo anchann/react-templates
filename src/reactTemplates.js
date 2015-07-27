@@ -325,6 +325,8 @@ function convertHtmlToReact(node, context) {
             // these are variables declared in the rt-scope attribute
             data.innerScopeMapping = {};
             _.each(node.attribs[scopeAttr].split(';'), function (scopePart) {
+                if (scopePart.trim().length === 0) return;
+
                 var scopeSubParts = scopePart.split(' as ');
                 if (scopeSubParts.length < 2) {
                     throw RTCodeError.build("invalid scope part '" + scopePart + "'", context, node);

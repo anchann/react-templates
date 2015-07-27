@@ -402,7 +402,7 @@ function convertHtmlToReact(node, context) {
 
         // Order matters here. The rt-if directive wraps over rt-scope, thus making sure
         // that the scope is only evaluated after the if condition passed
-        if (node.attribs[ifProp]) {
+        if (node.attribs[ifAttr]) {
             data.body = ifTemplate(data);
         }
         return data.body;

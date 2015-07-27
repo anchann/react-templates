@@ -20,3 +20,8 @@ npm-debug.log
 /target
 /coverage
 
+### Test Output ###
+test/data/*.rt.actual.js
+#
+### generated code output ###
+test/data/*.code.js

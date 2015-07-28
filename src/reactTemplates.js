@@ -52,6 +52,7 @@ var templateAttr = 'rt-repeat';
 var ifAttr = 'rt-if';
 var classSetAttr = 'rt-class';
 var classAttr = 'class';
+var innerScopeAttr = 'rt-inner-scope';
 var scopeAttr = 'rt-scope';
 var propsAttr = 'rt-props';
 
@@ -230,8 +231,7 @@ function generateProps(node, context) {
             var existing = props[propKey] ? props[propKey] + ' + " " + ' : '';
             if (key === classSetAttr) {
                 props[propKey] = existing + classSetTemplate({classSet: val});
-            }
-            else if (key === classAttr) {
+            } else if (key === classAttr) {
                 props[propKey] = existing + convertText(node, context, val.trim());
             }
         } else if (key.indexOf('rt-') !== 0) {
@@ -282,6 +282,20 @@ function hasNonSimpleChildren(node) {
     });
 }
 
+/*
+interface NodeConversionData {
+    innerScope: InnerScopeData;
+}
+
+interface InnerScopeData {
+    scopeName: string;
+    // these are variables that were already in scope, unrelated to the ones declared in rt-inner-scope
+    innerMapping: {[alias: string]: any};
+    // these are variables declared in the rt-inner-scope attribute
+    outerMapping: {[alias: string]: any};
+}
+*/
+
 /**
  * @param node
  * @param {Context} context
@@ -298,6 +312,26 @@ function convertHtmlToReact(node, context) {
 
         var data = {name: convertTagNameToConstructor(node.name, context)};
 
+        if (node.attribs[scopeAttr]) {
+            data.scopeMapping = {};
+            data.scopeName = '';
+            _.each(context.boundParams, function (boundParam) {
+                data.scopeMapping[boundParam] = boundParam;
+            });
+            _.each(node.attribs[scopeAttr].split(';'), function (scopePart) {
+                var scopeSubParts = scopePart.split(' as ');
+                if (scopeSubParts.length < 2) {
+                    throw RTCodeError.build("invalid scope part '" + scopePart + "'", context, node);
+                }
+                var scopeName = scopeSubParts[1].trim();
+                validateJS(scopeName, node, context);
+                stringUtils.addIfMissing(context.boundParams, scopeName);
+                data.scopeName += stringUtils.capitalize(scopeName);
+                data.scopeMapping[scopeName] = scopeSubParts[0].trim();
+                validateJS(data.scopeMapping[scopeName], node, context);
+            });
+        }
+
         // Order matters. We need to add the item and itemIndex to context.boundParams before
         // the rt-scope directive is processed, lest they are not passed to the child scopes
         if (node.attribs[templateAttr]) {
@@ -313,35 +347,39 @@ function convertHtmlToReact(node, context) {
             stringUtils.addIfMissing(context.boundParams, data.item + 'Index');
         }
 
-        if (node.attribs[scopeAttr]) {
-            data.scopeName = '';
+        if (node.attribs[innerScopeAttr]) {
+            data.innerScope = {
+                scopeName: '',
+                innerMapping: {},
+                outerMapping: {}
+            };
 
-            // these are variables that were already in scope, unrelated to the ones declared in rt-scope
-            data.outerScopeMapping = {};
             _.each(context.boundParams, function (boundParam) {
-                data.outerScopeMapping[boundParam] = boundParam;
+                data.innerScope.outerMapping[boundParam] = boundParam;
             });
 
-            // these are variables declared in the rt-scope attribute
-            data.innerScopeMapping = {};
-            _.each(node.attribs[scopeAttr].split(';'), function (scopePart) {
-                if (scopePart.trim().length === 0) return;
+            _.each(node.attribs[innerScopeAttr].split(';'), function (scopePart) {
+                if (scopePart.trim().length === 0) {
+                    return;
+                }
 
                 var scopeSubParts = scopePart.split(' as ');
                 if (scopeSubParts.length < 2) {
                     throw RTCodeError.build("invalid scope part '" + scopePart + "'", context, node);
                 }
-                var scopeName = scopeSubParts[1].trim();
-                validateJS(scopeName, node, context);
+                var alias = scopeSubParts[1].trim();
+                var value = scopeSubParts[0].trim();
+
+                validateJS(alias, node, context);
 
                 // this adds both parameters to the list of parameters passed further down
                 // the scope chain, as well as variables that are locally bound before any
                 // function call, as with the ones we generate for rt-scope.
-                stringUtils.addIfMissing(context.boundParams, scopeName);
+                stringUtils.addIfMissing(context.boundParams, alias);
 
-                data.scopeName += stringUtils.capitalize(scopeName);
-                data.innerScopeMapping[scopeName] = scopeSubParts[0].trim();
-                validateJS(data.innerScopeMapping[scopeName], node, context);
+                data.innerScope.scopeName += stringUtils.capitalize(alias);
+                data.innerScope.innerMapping[alias] = value;
+                validateJS(data.innerScope.innerMapping[alias], node, context);
             });
         }
 
@@ -373,14 +411,14 @@ function convertHtmlToReact(node, context) {
             data.body = shouldUseCreateElement(context) ? simpleTagTemplateCreateElement(data) : simpleTagTemplate(data);
         }
 
-        if (node.attribs[scopeAttr]) {
-            var scopeVarDeclarations = _.reduce(data.innerScopeMapping, function(acc, rightHandSide, leftHandSide) {
-                var declaration = "var " + leftHandSide + " = " + rightHandSide + ";"
+        if (node.attribs[innerScopeAttr]) {
+            var scopeVarDeclarations = _.reduce(data.innerScope.innerMapping, function (acc, rightHandSide, leftHandSide) {
+                var declaration = 'var ' + leftHandSide + ' = ' + rightHandSide + ';';
                 return acc + declaration;
-            }, "");
+            }, '');
             var functionBody = scopeVarDeclarations + 'return ' + data.body;
-            var generatedFuncName = generateInjectedFunc(context, 'scope' + data.scopeName, functionBody, _.keys(data.outerScopeMapping));
-            data.body = generatedFuncName + '.apply(this, [' + _.values(data.outerScopeMapping).join(',') + '])';
+            var generatedFuncName = generateInjectedFunc(context, 'scope' + data.innerScope.scopeName, functionBody, _.keys(data.innerScope.outerMapping));
+            data.body = generatedFuncName + '.apply(this, [' + _.values(data.innerScope.outerMapping).join(',') + '])';
         }
 
         // Order matters here. Each rt-repeat iteration wraps over the rt-scope, so
@@ -389,8 +427,8 @@ function convertHtmlToReact(node, context) {
             // Remove any inner scope mappings. Even though they've been added to the boundParams list,
             // they will be bound one function call deeper, and are thus not available in the top level
             // repeat function scope.
-            var boundParams = _.reject(context.boundParams, function(paramName) {
-                return data.innerScopeMapping !== undefined && data.innerScopeMapping[paramName] !== undefined;
+            var boundParams = _.reject(context.boundParams, function (paramName) {
+                return data.innerScope !== undefined && data.innerScope.innerMapping[paramName] !== undefined;
             });
 
             data.repeatFunction = generateInjectedFunc(context, 'repeat' + stringUtils.capitalize(data.item), 'return ' + data.body, boundParams);
@@ -405,6 +443,12 @@ function convertHtmlToReact(node, context) {
         if (node.attribs[ifAttr]) {
             data.body = ifTemplate(data);
         }
+
+        if (node.attribs[scopeAttr]) {
+            var generatedFuncName = generateInjectedFunc(context, 'scope' + data.scopeName, 'return ' + data.body, _.keys(data.scopeMapping));
+            data.body = generatedFuncName + '.apply(this, [' + _.values(data.scopeMapping).join(',') + '])';
+        }
+
         return data.body;
     } else if (node.type === 'comment') {
         return (commentTemplate(node));

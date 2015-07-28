@@ -41,6 +41,7 @@ http://plugins.jetbrains.com/plugin/7648
 * Built-in directives:
     * [rt-if](#rt-if)
     * [rt-repeat](#rt-repeat)
+    * [rt-repeat-children](#rt-repeat-children)
     * [rt-inner-scope](#rt-scope)
     * [rt-scope (deprecated)](#rt-scope)
     * [rt-props](#rt-props)
@@ -153,6 +154,34 @@ define([
         return _.map(this.getMyNumbers(), repeatMyNum1.bind(this));
     };
 });
+```
+
+## rt-repeat-children
+Repeats the children of a DOM node for each item in an array, discarding the wrapper node with the `rt-repeat-children` attribute.
+The syntax is `rt-repeat-children="itemVar in arrayExpr"`, where the element, `itemVar`, will be available in JavaScript context,
+and an `itemVarIndex` will be created to represent the index of the item.
+By using this naming scheme, repeated expressions have access to all levels of nesting.
+
+###### Sample:
+```html
+<div rt-scope="[1, 4, 9] as squares">
+    <div rt-repeat-children="square in squares">
+        <span>{squareIndex+1}</span>
+        <span>{square}</span>
+    </div>
+</div>
+```
+
+###### Renders as:
+```html
+<div>
+    <span>1</span>
+    <span>1</span>
+    <span>2</span>
+    <span>4</span>
+    <span>3</span>
+    <span>9</span>
+</div>
 ```
 
 ## rt-scope (deprecated)

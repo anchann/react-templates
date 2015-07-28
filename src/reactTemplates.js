@@ -12,6 +12,7 @@ var rtError = require('./RTCodeError');
 var RTCodeError = rtError.RTCodeError;
 
 var repeatTemplate = _.template('_.map(<%= collection %>,<%= repeatFunction %>.bind(<%= repeatBinds %>))');
+var repeatChildrenTemplate = _.template('_.map(<%= collectionExpression %>,<%= fn %>.bind(<%= binds %>))');
 var ifTemplate = _.template('((<%= condition %>)?(<%= body %>):null)');
 var propsTemplateSimple = _.template('_.assign({}, <%= generatedProps %>, <%= rtProps %>)');
 var propsTemplate = _.template('mergeProps( <%= generatedProps %>, <%= rtProps %>)');
@@ -24,6 +25,7 @@ var simpleTagTemplate = _.template('<%= name %>(<%= props %><%= children %>)');
 var tagTemplate = _.template('<%= name %>.apply(this, [<%= props %><%= children %>])');
 var simpleTagTemplateCreateElement = _.template('React.createElement(<%= name %>,<%= props %><%= children %>)');
 var tagTemplateCreateElement = _.template('React.createElement.apply(this, [<%= name %>,<%= props %><%= children %>])');
+var justChildrenTemplate = _.template('[<%= children %>]');
 var commentTemplate = _.template(' /* <%= data %> */ ');
 
 var templateAMDTemplate = _.template("define(<%= name ? '\"'+name + '\", ' : '' %>[<%= requirePaths %>], function (<%= requireNames %>) {\n'use strict';\n <%= injectedFunctions %>\nreturn function(){ return <%= body %>};\n});");
@@ -48,13 +50,14 @@ var templates = {
 
 var htmlSelfClosingTags = ['area', 'base', 'br', 'col', 'command', 'embed', 'hr', 'img', 'input', 'keygen', 'link', 'meta', 'param', 'source', 'track', 'wbr'];
 
-var templateAttr = 'rt-repeat';
-var ifAttr = 'rt-if';
-var classSetAttr = 'rt-class';
-var classAttr = 'class';
-var innerScopeAttr = 'rt-inner-scope';
-var scopeAttr = 'rt-scope';
-var propsAttr = 'rt-props';
+var repeatAttr         = 'rt-repeat';
+var repeatChildrenAttr = 'rt-repeat-children';
+var ifAttr             = 'rt-if';
+var classSetAttr       = 'rt-class';
+var classAttr          = 'class';
+var innerScopeAttr     = 'rt-inner-scope';
+var scopeAttr          = 'rt-scope';
+var propsAttr          = 'rt-props';
 
 var defaultOptions = {modules: 'amd', version: false, force: false, format: 'stylish', targetVersion: '0.13.1'};
 
@@ -278,13 +281,14 @@ function defaultContext(html, options) {
  */
 function hasNonSimpleChildren(node) {
     return _.any(node.children, function (child) {
-        return child.type === 'tag' && child.attribs[templateAttr];
+        return child.type === 'tag' && (child.attribs[repeatAttr] || child.attribs[repeatChildrenAttr]);
     });
 }
 
 /*
 interface NodeConversionData {
-    innerScope: InnerScopeData;
+    innerScope:         InnerScopeData;
+    repeatChildrenData: RepeatChildrenData;
 }
 
 interface InnerScopeData {
@@ -293,6 +297,13 @@ interface InnerScopeData {
     innerMapping: {[alias: string]: any};
     // these are variables declared in the rt-inner-scope attribute
     outerMapping: {[alias: string]: any};
+}
+
+interface RepeatChildrenData {
+    itemAlias:            string;
+    collectionExpression: string;
+    binds:                string[];
+    fn();
 }
 */
 
@@ -332,12 +343,16 @@ function convertHtmlToReact(node, context) {
             });
         }
 
+        if (node.attribs[repeatAttr] && node.attribs[repeatChildrenAttr]) {
+            throw RTCodeError.build("having both rt-repeat and rt-repeat-children on the same element is not supported.", context, node);
+        }
+
         // Order matters. We need to add the item and itemIndex to context.boundParams before
         // the rt-scope directive is processed, lest they are not passed to the child scopes
-        if (node.attribs[templateAttr]) {
-            var arr = node.attribs[templateAttr].split(' in ');
+        if (node.attribs[repeatAttr]) {
+            var arr = node.attribs[repeatAttr].split(' in ');
             if (arr.length !== 2) {
-                throw RTCodeError.build("rt-repeat invalid 'in' expression '" + node.attribs[templateAttr] + "'", context, node);
+                throw RTCodeError.build("rt-repeat invalid 'in' expression '" + node.attribs[repeatAttr] + "'", context, node);
             }
             data.item = arr[0].trim();
             data.collection = arr[1].trim();
@@ -345,6 +360,23 @@ function convertHtmlToReact(node, context) {
             validateJS(data.collection, node, context);
             stringUtils.addIfMissing(context.boundParams, data.item);
             stringUtils.addIfMissing(context.boundParams, data.item + 'Index');
+        }
+
+        if (node.attribs[repeatChildrenAttr]) {
+            var expressionParts = node.attribs[repeatChildrenAttr].split(' in ');
+            if (expressionParts.length !== 2) {
+                throw RTCodeError.build("rt-repeat invalid 'in' expression '" + node.attribs[repeatChildrenAttr] + "'", context, node);
+            }
+
+            data.repeatChildrenData = {
+                itemAlias:            expressionParts[0].trim(),
+                collectionExpression: expressionParts[1].trim()
+            };
+
+            validateJS(data.repeatChildrenData.itemAlias, node, context);
+            validateJS(data.repeatChildrenData.collectionExpression, node, context);
+            stringUtils.addIfMissing(context.boundParams, data.repeatChildrenData.itemAlias);
+            stringUtils.addIfMissing(context.boundParams, data.repeatChildrenData.itemAlias + 'Index');
         }
 
         if (node.attribs[innerScopeAttr]) {
@@ -405,7 +437,9 @@ function convertHtmlToReact(node, context) {
             return code;
         })) : '';
 
-        if (hasNonSimpleChildren(node)) {
+        if (node.attribs[repeatChildrenAttr]) {
+            data.body = justChildrenTemplate(data);
+        } else if (hasNonSimpleChildren(node)) {
             data.body = shouldUseCreateElement(context) ? tagTemplateCreateElement(data) : tagTemplate(data);
         } else {
             data.body = shouldUseCreateElement(context) ? simpleTagTemplateCreateElement(data) : simpleTagTemplate(data);
@@ -423,19 +457,27 @@ function convertHtmlToReact(node, context) {
 
         // Order matters here. Each rt-repeat iteration wraps over the rt-scope, so
         // the scope variables are evaluated in context of the current iteration.
-        if (node.attribs[templateAttr]) {
+        if (node.attribs[repeatAttr]) {
             // Remove any inner scope mappings. Even though they've been added to the boundParams list,
             // they will be bound one function call deeper, and are thus not available in the top level
             // repeat function scope.
-            var boundParams = _.reject(context.boundParams, function (paramName) {
-                return data.innerScope !== undefined && data.innerScope.innerMapping[paramName] !== undefined;
-            });
+            var boundParams = removeInnerScopeMappings(context.boundParams, data.innerScope);
 
             data.repeatFunction = generateInjectedFunc(context, 'repeat' + stringUtils.capitalize(data.item), 'return ' + data.body, boundParams);
-            data.repeatBinds = ['this'].concat(_.reject(boundParams, function (param) {
-                return (param === data.item || param === data.item + 'Index');
-            }));
+            data.repeatBinds = ['this'].concat(removeRepeatMappings(boundParams, data.item));
             data.body = repeatTemplate(data);
+        }
+
+        if (node.attribs[repeatChildrenAttr]) {
+            // Remove any inner scope mappings. Even though they've been added to the boundParams list,
+            // they will be bound one function call deeper, and are thus not available in the top level
+            // repeat function scope.
+            var boundParams = removeInnerScopeMappings(context.boundParams, data.innerScope);
+
+            var generatedFunctionName = 'repeatChildren' + stringUtils.capitalize(data.repeatChildrenData.itemAlias);
+            data.repeatChildrenData.fn = generateInjectedFunc(context, generatedFunctionName, 'return ' + data.body, boundParams);
+            data.repeatChildrenData.binds = ['this'].concat(removeRepeatMappings(boundParams, data.repeatChildrenData.itemAlias));
+            data.body = repeatChildrenTemplate(data.repeatChildrenData);
         }
 
         // Order matters here. The rt-if directive wraps over rt-scope, thus making sure
@@ -458,6 +500,23 @@ function convertHtmlToReact(node, context) {
         }
         return '';
     }
+}
+
+function removeInnerScopeMappings (boundParams, innerScope) {
+    return _.reject(boundParams, function (paramName) {
+        return innerScope !== undefined && innerScope.innerMapping[paramName] !== undefined;
+    });
+}
+
+function removeRepeatMappings (boundParams, itemAlias) {
+    var indexAlias = indexAliasForItemAlias(itemAlias);
+    return _.reject(boundParams, function (paramName) {
+        return paramName === itemAlias || paramName === indexAlias;
+    });
+}
+
+function indexAliasForItemAlias(itemAlias) {
+    return itemAlias + 'Index';
 }
 
 //function removeDocType(html) {

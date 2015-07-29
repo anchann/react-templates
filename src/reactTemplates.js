@@ -13,7 +13,7 @@ var RTCodeError = rtError.RTCodeError;
 
 var repeatTemplate = _.template('_.map(<%= collection %>,<%= repeatFunction %>.bind(<%= repeatBinds %>))');
 var repeatChildrenTemplate = _.template('_.map(<%= collectionExpression %>,<%= fn %>.bind(<%= binds %>))');
-var ifTemplate = _.template('((<%= condition %>)?(<%= body %>):null)');
+var ifTemplate = _.template('((<%= ifData.conditionExpression %>)?(<%= body %>):null)');
 var propsTemplateSimple = _.template('_.assign({}, <%= generatedProps %>, <%= rtProps %>)');
 var propsTemplate = _.template('mergeProps( <%= generatedProps %>, <%= rtProps %>)');
 var propsMergeFunction = 'function mergeProps(inline,external) {\n var res = _.assign({},inline,external)\nif (inline.hasOwnProperty(\'style\')) {\n res.style = _.defaults(res.style, inline.style);\n}\n' +
@@ -53,6 +53,7 @@ var htmlSelfClosingTags = ['area', 'base', 'br', 'col', 'command', 'embed', 'hr'
 var repeatAttr         = 'rt-repeat';
 var repeatChildrenAttr = 'rt-repeat-children';
 var ifAttr             = 'rt-if';
+var ifNotAttr          = 'rt-if-not';
 var classSetAttr       = 'rt-class';
 var classAttr          = 'class';
 var innerScopeAttr     = 'rt-inner-scope';
@@ -287,8 +288,9 @@ function hasNonSimpleChildren(node) {
 
 /*
 interface NodeConversionData {
-    innerScope:         InnerScopeData;
+    innerScopeData:     InnerScopeData;
     repeatChildrenData: RepeatChildrenData;
+    ifData:             IfData;
 }
 
 interface InnerScopeData {
@@ -304,6 +306,10 @@ interface RepeatChildrenData {
     collectionExpression: string;
     binds:                string[];
     fn();
+}
+
+interface IfData {
+    conditionExpression: string;
 }
 */
 
@@ -343,9 +349,7 @@ function convertHtmlToReact(node, context) {
             });
         }
 
-        if (node.attribs[repeatAttr] && node.attribs[repeatChildrenAttr]) {
-            throw RTCodeError.build("having both rt-repeat and rt-repeat-children on the same element is not supported.", context, node);
-        }
+        validateDirectiveCompatibility(node, context);
 
         // Order matters. We need to add the item and itemIndex to context.boundParams before
         // the rt-scope directive is processed, lest they are not passed to the child scopes
@@ -380,14 +384,14 @@ function convertHtmlToReact(node, context) {
         }
 
         if (node.attribs[innerScopeAttr]) {
-            data.innerScope = {
+            data.innerScopeData = {
                 scopeName: '',
                 innerMapping: {},
                 outerMapping: {}
             };
 
             _.each(context.boundParams, function (boundParam) {
-                data.innerScope.outerMapping[boundParam] = boundParam;
+                data.innerScopeData.outerMapping[boundParam] = boundParam;
             });
 
             _.each(node.attribs[innerScopeAttr].split(';'), function (scopePart) {
@@ -409,9 +413,9 @@ function convertHtmlToReact(node, context) {
                 // function call, as with the ones we generate for rt-scope.
                 stringUtils.addIfMissing(context.boundParams, alias);
 
-                data.innerScope.scopeName += stringUtils.capitalize(alias);
-                data.innerScope.innerMapping[alias] = value;
-                validateJS(data.innerScope.innerMapping[alias], node, context);
+                data.innerScopeData.scopeName += stringUtils.capitalize(alias);
+                data.innerScopeData.innerMapping[alias] = value;
+                validateJS(data.innerScopeData.innerMapping[alias], node, context);
             });
         }
 
@@ -428,9 +432,19 @@ function convertHtmlToReact(node, context) {
                 }
             }
         }
+
         if (node.attribs[ifAttr]) {
-            data.condition = node.attribs[ifAttr].trim();
+            data.ifData = {
+                conditionExpression: node.attribs[ifAttr].trim()
+            };
         }
+
+        if (node.attribs[ifNotAttr]) {
+            data.ifData = {
+                conditionExpression: '!(' + node.attribs[ifNotAttr].trim() + ')'
+            };
+        }
+
         data.children = node.children ? concatChildren(_.map(node.children, function (child) {
             var code = convertHtmlToReact(child, context);
             validateJS(code, child, context);
@@ -445,14 +459,14 @@ function convertHtmlToReact(node, context) {
             data.body = shouldUseCreateElement(context) ? simpleTagTemplateCreateElement(data) : simpleTagTemplate(data);
         }
 
-        if (node.attribs[innerScopeAttr]) {
-            var scopeVarDeclarations = _.reduce(data.innerScope.innerMapping, function (acc, rightHandSide, leftHandSide) {
+        if (data.innerScopeData) {
+            var scopeVarDeclarations = _.reduce(data.innerScopeData.innerMapping, function (acc, rightHandSide, leftHandSide) {
                 var declaration = 'var ' + leftHandSide + ' = ' + rightHandSide + ';';
                 return acc + declaration;
             }, '');
             var functionBody = scopeVarDeclarations + 'return ' + data.body;
-            var generatedFuncName = generateInjectedFunc(context, 'scope' + data.innerScope.scopeName, functionBody, _.keys(data.innerScope.outerMapping));
-            data.body = generatedFuncName + '.apply(this, [' + _.values(data.innerScope.outerMapping).join(',') + '])';
+            var generatedFuncName = generateInjectedFunc(context, 'scope' + data.innerScopeData.scopeName, functionBody, _.keys(data.innerScopeData.outerMapping));
+            data.body = generatedFuncName + '.apply(this, [' + _.values(data.innerScopeData.outerMapping).join(',') + '])';
         }
 
         // Order matters here. Each rt-repeat iteration wraps over the rt-scope, so
@@ -461,18 +475,18 @@ function convertHtmlToReact(node, context) {
             // Remove any inner scope mappings. Even though they've been added to the boundParams list,
             // they will be bound one function call deeper, and are thus not available in the top level
             // repeat function scope.
-            var boundParams = removeInnerScopeMappings(context.boundParams, data.innerScope);
+            var boundParams = removeInnerScopeMappings(context.boundParams, data.innerScopeData);
 
             data.repeatFunction = generateInjectedFunc(context, 'repeat' + stringUtils.capitalize(data.item), 'return ' + data.body, boundParams);
             data.repeatBinds = ['this'].concat(removeRepeatMappings(boundParams, data.item));
             data.body = repeatTemplate(data);
         }
 
-        if (node.attribs[repeatChildrenAttr]) {
+        if (data.repeatChildrenData) {
             // Remove any inner scope mappings. Even though they've been added to the boundParams list,
             // they will be bound one function call deeper, and are thus not available in the top level
             // repeat function scope.
-            var boundParams = removeInnerScopeMappings(context.boundParams, data.innerScope);
+            var boundParams = removeInnerScopeMappings(context.boundParams, data.innerScopeData);
 
             var generatedFunctionName = 'repeatChildren' + stringUtils.capitalize(data.repeatChildrenData.itemAlias);
             data.repeatChildrenData.fn = generateInjectedFunc(context, generatedFunctionName, 'return ' + data.body, boundParams);
@@ -480,9 +494,9 @@ function convertHtmlToReact(node, context) {
             data.body = repeatChildrenTemplate(data.repeatChildrenData);
         }
 
-        // Order matters here. The rt-if directive wraps over rt-scope, thus making sure
+        // Order matters here. The rt-if/rt-if-not directives wrap over rt-scope, thus making sure
         // that the scope is only evaluated after the if condition passed
-        if (node.attribs[ifAttr]) {
+        if (data.ifData) {
             data.body = ifTemplate(data);
         }
 
@@ -502,9 +516,19 @@ function convertHtmlToReact(node, context) {
     }
 }
 
-function removeInnerScopeMappings (boundParams, innerScope) {
+function validateDirectiveCompatibility(node, context) {
+    if (node.attribs[repeatAttr] && node.attribs[repeatChildrenAttr]) {
+        throw RTCodeError.build("having both rt-repeat and rt-repeat-children on the same element is not supported.", context, node);
+    }
+
+    if (node.attribs[ifAttr] && node.attribs[ifNotAttr]) {
+        throw RTCodeError.build("having both rt-if and rt-if-not on the same element is not supported.", context, node);
+    }
+}
+
+function removeInnerScopeMappings (boundParams, innerScopeData) {
     return _.reject(boundParams, function (paramName) {
-        return innerScope !== undefined && innerScope.innerMapping[paramName] !== undefined;
+        return innerScopeData !== undefined && innerScopeData.innerMapping[paramName] !== undefined;
     });
 }
 

@@ -190,6 +190,7 @@ test('html tests', function (t) {
         'repeat-children.rt',
         'repeat-children-with-scope.rt',
         'repeat-children-with-nesting.rt',
+        'if-not.rt',
         'lambda.rt',
         'eval.rt',
         'props.rt',

@@ -2,11 +2,6 @@
 [![build status][travis-image]][travis-url]
 [![Coverage Status][coveralls-image]][coveralls-url]
 
-# Branched
-
-It appears that the original authors are not responsive to PRs, so I've branched the project to include improvements that I consider important.
-As a result, some of the tooling referenced below may still be referencing the old version.
-
 # React Templates
 
 Lightweight templates for [React](http://facebook.github.io/react/index.html).
@@ -40,6 +35,7 @@ http://plugins.jetbrains.com/plugin/7648
 * {} to identify JS expression
 * Built-in directives:
     * [rt-if](#rt-if)
+    * [rt-if-not](#rt-if-not)
     * [rt-repeat](#rt-repeat)
     * [rt-repeat-children](#rt-repeat-children)
     * [rt-inner-scope](#rt-scope)
@@ -132,6 +128,10 @@ define([
     };
 });
 ```
+
+## rt-if-not
+The negated version of `rt-if`, to aid readability. Simply wraps the condition in !().
+
 
 ## rt-repeat
 Repeats a DOM node with its subtree for each item in an array. The syntax is `rt-repeat="itemVar in arrayExpr"`, where the element, `itemVar`, will be available in JavaScript context, and an `itemVarIndex` will be created to represent the index of the item. By using this naming scheme, repeated expressions have access to all levels of nesting.

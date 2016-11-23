@@ -20,7 +20,7 @@ var propsMergeFunction = 'function mergeProps(inline,external) {\n var res = _.a
     ' if (inline.hasOwnProperty(\'className\') && external.hasOwnProperty(\'className\')) {\n' +
     ' res.className = external.className + \' \' + inline.className;\n} return res;\n}\n';
 //var classSetTemplate = _.template('React.addons.classSet(<%= classSet %>)');
-var classSetTemplate = _.template('_.keys(_.pick(<%= classSet %>, _.identity)).join(" ")');
+var classSetTemplate = _.template('_.keys(_.pickBy(<%= classSet %>, _.identity)).join(" ")');
 var simpleTagTemplate = _.template('<%= name %>(<%= props %><%= children %>)');
 var tagTemplate = _.template('<%= name %>.apply(this, [<%= props %><%= children %>])');
 var simpleTagTemplateCreateElement = _.template('React.createElement(<%= name %>,<%= props %><%= children %>)');

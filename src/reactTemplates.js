@@ -44,9 +44,10 @@ const commentTemplate = _.template(' /* <%= data %> */ ')
 
 const repeatAttr = 'rt-repeat'
 const ifAttr = 'rt-if'
+const ifNotAttr = 'rt-if-not'
 const classSetAttr = 'rt-class'
 const classAttr = 'class'
-const scopeAttr = 'rt-scope'
+const scopeAttr = 'rt-inner-scope' // change back and refactor our code base
 const propsAttr = 'rt-props'
 const templateNode = 'rt-template'
 const virtualNode = 'rt-virtual'
@@ -387,8 +388,16 @@ function convertHtmlToReact(node, context) {
         }
 
         if (node.attribs[ifAttr]) {
-            validateIfAttribute(node, context, data)
+            validateIfAttribute(ifAttr, node, context, data)
             data.condition = node.attribs[ifAttr].trim()
+            if (!node.attribs.key && node.name !== virtualNode) {
+                _.set(node, ['attribs', 'key'], `${node.startIndex}`)
+            }
+        }
+
+        if (node.attribs[ifNotAttr]) {
+            validateIfAttribute(ifNotAttr, node, context, data)
+            data.condition = `!(${node.attribs[ifNotAttr].trim()})`
             if (!node.attribs.key && node.name !== virtualNode) {
                 _.set(node, ['attribs', 'key'], `${node.startIndex}`)
             }
@@ -409,9 +418,9 @@ function convertHtmlToReact(node, context) {
         }
 
         if (node.name === virtualNode) {
-            const invalidAttributes = _.without(_.keys(node.attribs), scopeAttr, ifAttr, repeatAttr)
+            const invalidAttributes = _.without(_.keys(node.attribs), scopeAttr, ifAttr, ifNotAttr, repeatAttr)
             if (invalidAttributes.length > 0) {
-                throw RTCodeError.build(context, node, "<rt-virtual> may not contain attributes other than 'rt-scope', 'rt-if' and 'rt-repeat'")
+                throw RTCodeError.build(context, node, "<rt-virtual> may not contain attributes other than 'rt-scope', 'rt-if', 'rt-if-not' and 'rt-repeat'")
             }
 
             // provide a key to virtual node children if missing
@@ -453,7 +462,7 @@ function convertHtmlToReact(node, context) {
             data.repeatBinds = ['this'].concat(_.reject(context.boundParams, p => p === data.item || p === data.index || data.innerScope && p in data.innerScope.innerMapping))
             data.body = repeatTemplate(data)
         }
-        if (node.attribs[ifAttr]) {
+        if (node.attribs[ifAttr] || node.attribs[ifNotAttr]) {
             data.body = ifTemplate(data)
         }
         return data.body
@@ -476,7 +485,7 @@ function convertHtmlToReact(node, context) {
  * @returns {Array} an array of {expression,identifier}
  * @throws {String} the part of the string that failed to parse
  */
-function parseScopeSyntax(text) {
+function parseScopeSyntax_OriginalThatDoesNotSupportNewlines(text) {
     // the regex below was built using the following pseudo-code:
     // double_quoted_string = `"[^"\\\\]*(?:\\\\.[^"\\\\]*)*"`
     // single_quoted_string = `'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'`
@@ -505,6 +514,25 @@ function parseScopeSyntax(text) {
     } while (regex.lastIndex < text.length)
 
     return res
+}
+
+function parseScopeSyntax(text) {
+    const res = []
+    _.each(text.split(';'), function (scopePart) {
+        if (scopePart.trim().length === 0) {
+            return;
+        }
+
+        var scopeSubParts = scopePart.split(' as ');
+        if (scopeSubParts.length < 2) {
+            throw RTCodeError.build("invalid scope part '" + scopePart + "'", context, node);
+        }
+        var alias = scopeSubParts[1].trim();
+        var value = scopeSubParts[0].trim();
+
+        res.push({expression: value, identifier: alias});
+    });
+    return res;
 }
 
 function handleScopeAttribute(node, context, data) {
@@ -539,21 +567,21 @@ function handleScopeAttribute(node, context, data) {
     })
 }
 
-function validateIfAttribute(node, context, data) {
+function validateIfAttribute(attributeName, node, context, data) {
     const innerMappingKeys = _.keys(data.innerScope && data.innerScope.innerMapping || {})
     let ifAttributeTree = null
     try {
-        ifAttributeTree = esprima.parse(node.attribs[ifAttr])
+        ifAttributeTree = esprima.parse(node.attribs[attributeName])
     } catch (e) {
         throw new RTCodeError(e.message, e.index, -1)
     }
     if (ifAttributeTree && ifAttributeTree.body && ifAttributeTree.body.length === 1 && ifAttributeTree.body[0].type === 'ExpressionStatement') {
         // make sure that rt-if does not use an inner mapping
         if (ifAttributeTree.body[0].expression && utils.usesScopeName(innerMappingKeys, ifAttributeTree.body[0].expression)) {
-            throw RTCodeError.buildFormat(context, node, "invalid scope mapping used in if part '%s'", node.attribs[ifAttr])
+            throw RTCodeError.buildFormat(context, node, "invalid scope mapping used in if part '%s'", node.attribs[attributeName])
         }
     } else {
-        throw RTCodeError.buildFormat(context, node, "invalid if part '%s'", node.attribs[ifAttr])
+        throw RTCodeError.buildFormat(context, node, "invalid if part '%s'", node.attribs[attributeName])
     }
 }
 

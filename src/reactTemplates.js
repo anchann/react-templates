@@ -13,7 +13,7 @@ const utils = require('./utils')
 const validateJS = utils.validateJS
 const RTCodeError = rtError.RTCodeError
 
-const repeatTemplate = _.template('_.map(<%= collection %>,<%= repeatFunction %>.bind(<%= repeatBinds %>))')
+const repeatTemplate = _.template('<%= rtRepeatMapFunction %>(<%= collection %>,<%= repeatFunction %>.bind(<%= repeatBinds %>))')
 const ifTemplate = _.template('((<%= condition %>)?(<%= body %>):null)')
 const propsTemplateSimple = _.template('_.assign({}, <%= generatedProps %>, <%= rtProps %>)')
 const propsTemplate = _.template('mergeProps( <%= generatedProps %>, <%= rtProps %>)')
@@ -73,7 +73,8 @@ function getOptions(options) {
         targetVersion: reactDOMSupport.default,
         lodashImportPath: 'lodash',
         native: false,
-        nativeTargetVersion: reactNativeSupport.default
+        nativeTargetVersion: reactNativeSupport.default,
+        rtRepeatMapFunction: '_.map'
     }
 
     const finalOptions = _.defaults({}, options, defaultOptions)
@@ -460,6 +461,7 @@ function convertHtmlToReact(node, context) {
         if (node.attribs[repeatAttr]) {
             data.repeatFunction = generateInjectedFunc(context, 'repeat' + _.upperFirst(data.item), 'return ' + data.body)
             data.repeatBinds = ['this'].concat(_.reject(context.boundParams, p => p === data.item || p === data.index || data.innerScope && p in data.innerScope.innerMapping))
+            data.rtRepeatMapFunction = context.options.rtRepeatMapFunction;
             data.body = repeatTemplate(data)
         }
         if (node.attribs[ifAttr] || node.attribs[ifNotAttr]) {
